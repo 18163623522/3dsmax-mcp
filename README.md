@@ -253,6 +253,7 @@ and existing procedural skies use the provider's dome or environment binding.
 | Tool | Description |
 |------|-------------|
 | `assign_controller` | Create and assign a controller to a sub-anim track |
+| `script_controller` | Inspect, validate and apply scripts with typed inputs, frame checks and rollback |
 | `inspect_controller` | Inspect one controller track |
 | `inspect_track_view` | Track View-style controller hierarchy |
 | `set_controller_props` | Edit script text or controller properties |
