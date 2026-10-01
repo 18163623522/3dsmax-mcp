@@ -41,8 +41,11 @@ public:
         std::function<std::string()> work;
         std::string result;
         bool completed = false;
+        bool started = false;
+        bool cancelled = false;
         bool error = false;
         std::string error_message;
+        std::string request_id, command_type;
         std::mutex mutex;
         std::condition_variable cv;
     };

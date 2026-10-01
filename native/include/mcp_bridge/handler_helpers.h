@@ -21,6 +21,7 @@
 #include <maxscript/maxwrapper/mxsobjects.h>
 #include <CoreFunctions.h>
 #include "mcp_bridge/color_value.h"
+#include "mcp_bridge/dialog_watch.h"
 
 class MCPBridgeGUP;
 
@@ -309,6 +310,8 @@ inline std::wstring WrapForErrorCapture(const std::wstring& wcmd) {
 
 // ── MAXScript execution (for hybrid handlers) ───────────────────
 inline std::string RunMAXScript(const std::string& script) {
+    // Tool scripts are batch work: prompts take their defaults.
+    TempQuietMode quiet;
     std::wstring wcmd = WrapForErrorCapture(Utf8ToWide(script));
     FPValue fpv;
     BOOL ok = FALSE;
@@ -317,7 +320,7 @@ inline std::string RunMAXScript(const std::string& script) {
         ok = ExecuteMAXScriptScript(
             wcmd.c_str(),
             MAXScript::ScriptSource::NonEmbedded,
-            FALSE,   // quietErrors
+            TRUE,    // quietErrors: never route agent diagnostics to modal UI
             &fpv,    // result
             TRUE     // logQuietErrors
         );
@@ -326,9 +329,11 @@ inline std::string RunMAXScript(const std::string& script) {
     }
 
     if (!ok) {
-        throw std::runtime_error("MAXScript execution failed");
+        const std::string detail = fpv.type == TYPE_TSTR && fpv.tstr ? WideToUtf8(fpv.tstr->data()) : "";
+        throw std::runtime_error("MAXScript execution failed: " + detail);
     }
 
+    DialogWatch::ThrowIfDismissed();
     // Convert FPValue to string
     if (fpv.type == TYPE_STRING || fpv.type == TYPE_FILENAME) {
         return WideToUtf8(fpv.s);

@@ -1,4 +1,5 @@
 #include "mcp_bridge/main_thread_executor.h"
+#include "mcp_bridge/dialog_watch.h"
 
 #include <random>
 
@@ -74,7 +75,8 @@ std::string MainThreadExecutor::ExecuteSync(
     // Direct mode: run on calling thread, skip main-thread roundtrip.
     // Used for read-only handlers on pipe worker threads.
     if (tl_direct_mode_) {
-        return work();
+        DialogWatch::Guard guard(DialogWatch::RequestId(), DialogWatch::CommandType());
+        return guard.Execute(work);
     }
 
     if (!hwnd_) {
@@ -83,7 +85,10 @@ std::string MainThreadExecutor::ExecuteSync(
 
     auto item = std::make_shared<WorkItem>();
     item->work = std::move(work);
+    item->request_id = DialogWatch::RequestId();
+    item->command_type = DialogWatch::CommandType();
 
+    DialogWatch::MarkQueued();
     // prevent shared_ptr from dying before main thread processes it
     auto* raw = new std::shared_ptr<WorkItem>(item);
 
@@ -99,7 +104,17 @@ std::string MainThreadExecutor::ExecuteSync(
         [&] { return item->completed; });
 
     if (!finished) {
-        throw std::runtime_error("Main thread execution timed out");
+        if (!item->started) {
+            // A timed-out queued mutation must never execute later, after the
+            // caller has left (its lambda may also capture stack references).
+            item->cancelled = true;
+            throw std::runtime_error("Main thread execution timed out before starting; queued work cancelled");
+        }
+        // Running SDK work is not safely interruptible. Keep its caller and
+        // captured references alive until it exits. The pipe client's timeout
+        // reports an unknown outcome without replaying; dialog recovery uses a
+        // separate connection and remains available while we wait here.
+        item->cv.wait(lock, [&] { return item->completed; });
     }
 
     if (item->error) {
@@ -156,15 +171,23 @@ LRESULT CALLBACK MainThreadExecutor::WndProc(
 void MainThreadExecutor::RunWorkItem(const std::shared_ptr<WorkItem>& item) {
     {
         std::lock_guard<std::mutex> lock(item->mutex);
-        try {
-            item->result = item->work();
-        } catch (const std::exception& e) {
-            item->error = true;
-            item->error_message = e.what();
-        } catch (...) {
-            item->error = true;
-            item->error_message = "Unknown exception on main thread";
-        }
+        if (item->cancelled) return;
+        item->started = true;
+    }
+    std::string result, error;
+    try {
+        DialogWatch::Guard guard(item->request_id, item->command_type);
+        result = guard.Execute(item->work);
+    } catch (const std::exception& e) {
+        error = e.what();
+    } catch (...) {
+        error = "Unknown exception on main thread";
+    }
+    {
+        std::lock_guard<std::mutex> lock(item->mutex);
+        item->result = std::move(result);
+        item->error = !error.empty();
+        item->error_message = std::move(error);
         item->completed = true;
     }
     item->cv.notify_all();

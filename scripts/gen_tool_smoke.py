@@ -31,6 +31,7 @@ FLAG_EXPECT_ERROR = 2
 
 # Skipped unless run_tool_smoke(include_skipped=True) / native includeSkipped
 SKIP_DEFAULT = {
+    "max_dialogs",
     "script_controller",
     "cosmos_search",
     "cosmos_download",
